@@ -1,4 +1,4 @@
-const API_BASE_URL = 'https://helpdesk-backend-1my8.onrender.com';
+const API_BASE_URL = 'https://helpdesk-backend-1my8.onrender.com'; // Ваш URL
 
 // --- Утилиты для работы с API ---
 async function apiRequest(method, params = {}) {
@@ -7,18 +7,23 @@ async function apiRequest(method, params = {}) {
 
     try {
         const response = await fetch(url, { method });
+        
+        // ВАЖНО: Проверка на 204 (No Content) ДОЛЖНА быть до response.json()
+        if (response.status === 204) return null; 
+        
         if (!response.ok) {
-            if (response.status === 204) return null;
             throw new Error(`Ошибка сервера: ${response.status}`);
         }
-        return await response.json();
+        
+        // Проверяем, есть ли вообще контент для парсинга
+        const text = await response.text();
+        return text ? JSON.parse(text) : null;
     } catch (error) {
         console.error('Ошибка API:', error);
         throw error;
     }
 }
 
-// --- CRUD-операции ---
 const api = {
     getAllTickets: () => apiRequest('GET', { method: 'allTickets' }),
     getTicketById: (id) => apiRequest('GET', { method: 'ticketById', id }),
@@ -60,44 +65,54 @@ function createTicketElement(ticket) {
     ticketEl.dataset.id = ticket.id;
 
     const statusIcon = ticket.status ? '✅' : '🔄';
-    const shortDescription = ticket.description ? ticket.description.slice(0, 50) + (ticket.description.length > 50 ? '...' : '') : '';
+    
+    // Форматируем дату
+    const dateObj = new Date(ticket.created);
+    const dateStr = `${String(dateObj.getDate()).padStart(2, '0')}.${String(dateObj.getMonth()+1).padStart(2, '0')}.${String(dateObj.getFullYear()).slice(2)} ${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
 
     ticketEl.innerHTML = `
         <div class="ticket-header">
             <span class="ticket-status" title="${ticket.status ? 'Выполнено' : 'В работе'}">${statusIcon}</span>
             <span class="ticket-name">${ticket.name}</span>
+            <span class="ticket-date">${dateStr}</span>
             <div class="ticket-actions">
                 <button class="btn btn-sm btn-edit" title="Редактировать">✎</button>
                 <button class="btn btn-sm btn-delete" title="Удалить">x</button>
             </div>
         </div>
         <div class="ticket-body">
-            <div class="ticket-description">${shortDescription}</div>
-            <div class="ticket-meta">Создан: ${new Date(ticket.created).toLocaleString()}</div>
+            <div class="ticket-description">Загрузка...</div>
         </div>
     `;
 
+    const bodyEl = ticketEl.querySelector('.ticket-body');
+    const descEl = ticketEl.querySelector('.ticket-description');
+
     // Обработчик клика по телу тикета (для показа полного описания)
     ticketEl.querySelector('.ticket-header').addEventListener('click', async (e) => {
-        if (e.target.closest('.ticket-actions')) return; // Игнорируем клики по кнопкам
+        // Игнорируем клики по кнопкам и чекбоксу
+        if (e.target.closest('.ticket-actions') || e.target.closest('.ticket-status')) return; 
 
-        const fullTicket = await api.getTicketById(ticket.id);
-        const descEl = ticketEl.querySelector('.ticket-description');
-        descEl.textContent = fullTicket.description || 'Описание отсутствует';
-        descEl.classList.toggle('full-description');
+        // Переключаем видимость
+        const isOpen = bodyEl.classList.toggle('open');
+
+        // Если открываем и описание еще не загружено, загружаем его
+        if (isOpen && !bodyEl.dataset.loaded) {
+            descEl.textContent = 'Загрузка описания...';
+            const fullTicket = await api.getTicketById(ticket.id);
+            descEl.textContent = fullTicket.description || 'Описание отсутствует';
+            bodyEl.dataset.loaded = 'true'; // Помечаем, что загрузили
+        }
     });
 
-    // Обработчик для кнопки "Редактировать"
     ticketEl.querySelector('.btn-edit').addEventListener('click', () => {
         showEditModal(ticket);
     });
 
-    // Обработчик для кнопки "Удалить"
     ticketEl.querySelector('.btn-delete').addEventListener('click', () => {
         showDeleteModal(ticket.id);
     });
 
-    // Обработчик для изменения статуса
     ticketEl.querySelector('.ticket-status').addEventListener('click', async (e) => {
         e.stopPropagation();
         const newStatus = !ticket.status;
@@ -126,9 +141,15 @@ function showModal(title, bodyHtml, onConfirm) {
 
     const close = () => modal.remove();
     modal.querySelector('.btn-cancel').addEventListener('click', close);
+    
     modal.querySelector('.btn-confirm').addEventListener('click', async () => {
-        await onConfirm();
-        close();
+        try {
+            await onConfirm();
+            close(); // Закрываем окно ТОЛЬКО если ошибки не было
+        } catch (err) {
+            alert('Произошла ошибка при выполнении запроса.');
+            close();
+        }
     });
 }
 
@@ -167,6 +188,7 @@ function showDeleteModal(id) {
 
 // --- Инициализация ---
 async function loadTickets() {
+    listEl.innerHTML = '<div class="loading-message">Загрузка данных... (Если сервер спал, это может занять до минуты)</div>';
     try {
         const tickets = await api.getAllTickets();
         renderTickets(tickets);
