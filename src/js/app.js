@@ -1,4 +1,4 @@
-const API_BASE_URL = 'https://helpdesk-backend-1my8.onrender.com/';
+const API_BASE_URL = 'https://helpdesk-backend-1my8.onrender.com';
 
 // --- Утилиты для работы с API ---
 async function apiRequest(method, params = {}) {
